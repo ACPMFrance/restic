@@ -9,7 +9,7 @@ them in and out and the Go heap stays small.
 Configuration (environment variables, off by default, unix only):
 
 * `RESTIC_INDEX_MMAP_DIR`: directory for the temporary files. Enables the
-  feature. Must be on a real disk with room for roughly 150 B per blob (the
+  feature. Must be on a real disk with room for roughly 80 B per blob (the
   files are sparse and unlinked at creation, nothing is left behind after a
   crash). Do not use tmpfs: it is memory again.
 * `RESTIC_INDEX_MMAP_MIN_ENTRIES`: a blob type switches to disk once it has
