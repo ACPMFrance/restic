@@ -360,9 +360,16 @@ func (r *Repository) getZstdEncoder() *zstd.Encoder {
 
 func (r *Repository) getZstdDecoder() *zstd.Decoder {
 	r.allocDec.Do(func() {
+		// Use all available cores, except with the mapped index store: every
+		// decoder state keeps the buffers of the biggest frame it decoded (an
+		// index file expands to ~10 MiB), so one state per core costs
+		// ~500 MiB on a 22-core machine for no gain, see index.DiskStoreEnabled.
+		decoders := 0
+		if index.DiskStoreEnabled() {
+			decoders = 4
+		}
 		opts := []zstd.DOption{
-			// Use all available cores.
-			zstd.WithDecoderConcurrency(0),
+			zstd.WithDecoderConcurrency(decoders),
 			// Limit the maximum decompressed memory. Set to a very high,
 			// conservative value.
 			zstd.WithDecoderMaxMemory(16 * 1024 * 1024 * 1024),

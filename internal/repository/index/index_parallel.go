@@ -17,6 +17,13 @@ func ForAllIndexes(ctx context.Context, lister restic.Lister, repo restic.Loader
 	// decoding an index can take quite some time such that this can be both CPU- or IO-bound
 	// as the whole index is kept in memory anyways, a few workers too much don't matter
 	workerCount := repo.Connections() + uint(runtime.GOMAXPROCS(0))
+	if diskStoreEnabled() && workerCount > diskIndexWorkers {
+		// Every worker holds a raw and a decoded index file in the Go heap, and
+		// the callback (merge into the mapped index) is serialized anyway: more
+		// workers only raise the memory peak (measured: ~25 workers on a 22-core
+		// machine = 630 MiB, 4 workers = 145 MiB, same duration).
+		workerCount = diskIndexWorkers
+	}
 
 	var m sync.Mutex
 	return restic.ParallelList(ctx, lister, restic.IndexFile, workerCount, func(ctx context.Context, id restic.ID, _ int64) error {

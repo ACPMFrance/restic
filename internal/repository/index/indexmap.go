@@ -33,7 +33,21 @@ type indexMap struct {
 
 	seed maphash.Seed
 
-	blockList hashedArrayTree
+	blockList entryArray
+
+	// disk is non-nil once buckets and entries live in memory-mapped
+	// temporary files instead of the Go heap, see diskstore.go.
+	disk *diskStore
+}
+
+// entryArray is the append-only storage of the entries of an indexMap.
+// Entry pointers returned by Alloc and Ref stay valid until the indexMap is
+// dropped: implementations never move an entry once it has been allocated.
+type entryArray interface {
+	Alloc() (*indexEntry, uint)
+	Ref(pos uint) *indexEntry
+	Size() uint
+	preallocate(numEntries uint)
 }
 
 const (
@@ -62,6 +76,9 @@ func (m *indexMap) add(id restic.ID, packIdx uint32, offset, length uint32, unco
 // values returns an iterator over all entries in the map.
 func (m *indexMap) values() iter.Seq[*indexEntry] {
 	return func(yield func(*indexEntry) bool) {
+		if m.blockList == nil {
+			return // not initialized, no entries
+		}
 		blockCount := m.blockList.Size()
 		for i := uint(1); i < blockCount; i++ {
 			if !yield(m.resolve(i)) {
@@ -146,6 +163,9 @@ func (m *indexMap) preallocate(numEntries int) {
 	if len(m.buckets) == 0 {
 		m.init() // Perform lazy initialization.
 	}
+	if m.disk == nil && diskStoreWanted(uint(numEntries)) {
+		m.moveToDisk()
+	}
 
 	// new size must be a power of two
 	newSize := len(m.buckets)
@@ -156,7 +176,11 @@ func (m *indexMap) preallocate(numEntries int) {
 		return
 	}
 
-	m.buckets = make([]uint, newSize)
+	if m.disk != nil {
+		m.buckets = m.disk.allocBuckets(newSize)
+	} else {
+		m.buckets = make([]uint, newSize)
+	}
 
 	blockCount := m.blockList.Size()
 	for i := uint(1); i < blockCount; i++ {
@@ -185,7 +209,7 @@ func (m *indexMap) init() {
 	m.seed = maphash.MakeSeed()
 	m.buckets = make([]uint, initialBuckets)
 	// first entry in blockList serves as null byte
-	m.blockList = *newHAT()
+	m.blockList = newHAT()
 	m.newEntry()
 }
 
@@ -272,6 +296,8 @@ func newHAT() *hashedArrayTree {
 		blockList: make([][]indexEntry, blockSize),
 	}
 }
+
+var _ entryArray = (*hashedArrayTree)(nil)
 
 func (h *hashedArrayTree) Alloc() (*indexEntry, uint) {
 	h.grow()

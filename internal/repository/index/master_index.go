@@ -320,6 +320,12 @@ func (mi *MasterIndex) Load(ctx context.Context, r restic.ListerLoaderUnpacked, 
 		if idx == nil {
 			return nil
 		}
+		if diskStoreEnabled() {
+			// Merge right away into the first (mapped) index. Otherwise all
+			// decoded indexes would sit in the Go heap until the final merge,
+			// which is exactly the memory peak the mapped store avoids.
+			return mi.mergeLoaded(idx)
+		}
 		mi.Insert(idx)
 		return nil
 	})
@@ -329,6 +335,17 @@ func (mi *MasterIndex) Load(ctx context.Context, r restic.ListerLoaderUnpacked, 
 	}
 
 	return mi.MergeFinalIndexes()
+}
+
+// mergeLoaded merges a freshly decoded, final index into the first index.
+func (mi *MasterIndex) mergeLoaded(idx *Index) error {
+	mi.idxMutex.Lock()
+	defer mi.idxMutex.Unlock()
+
+	if err := mi.idx[0].merge(idx); err != nil {
+		return fmt.Errorf("Load: %w", err)
+	}
+	return nil
 }
 
 func (mi *MasterIndex) prepareIncrementalLoad(ctx context.Context, indexList restic.Lister) (restic.IDSet, error) {
